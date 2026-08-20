@@ -101,8 +101,8 @@ input_number:
 logger:
   default: warning
   logs:
-    automation.mikrotik_atlgm_lte_watchdog_warning_monitor: debug
-    automation.mikrotik_atlgm_lte_watchdog_auto_reboot: debug
+    homeassistant.components.automation.lte_watchdog_monitoring_shliuzov_warning: debug
+    homeassistant.components.automation.lte_watchdog_avto_perezagruzka_mikrotik: debug
     custom.mikrotik_atlgm_lte_watchdog: debug
 
 automation:
@@ -137,7 +137,7 @@ automation:
         {% if last in ['unknown','unavailable', None, ''] %}
           999999
         {% else %}
-          {{ ((now() - (last | as_datetime)).total_seconds() / 60) | round(1) }}
+          {{ ((as_timestamp(now()) - as_timestamp(last)) / 60) | round(1) }}
         {% endif %}
     condition:
       - condition: template
@@ -147,11 +147,11 @@ automation:
       - action: system_log.write
         data:
           message: >-
-            [mikrotik_atlgm_lte_watchdog] WARNING: LTE(status={{ status_lte }},
+            [mikrotik_atlgm_lte_watchdog] STATUS: LTE(status={{ status_lte }},
             loss={{ loss_lte }}%, delay={{ delay_lte }}ms)
             DHCP(status={{ status_dhcp }}, loss={{ loss_dhcp }}%,
             delay={{ delay_dhcp }}ms) threshold={{ loss_threshold }}%
-          level: warning
+          level: info
           logger: custom.mikrotik_atlgm_lte_watchdog
 
       - condition: template
@@ -159,19 +159,19 @@ automation:
 
       - action: telegram_bot.send_message
         data:
-          target: !secret telegram_chat_id
+          chat_id: !secret telegram_chat_id
           message: >-
-            ⚠️ *LTE_1: обнаружена проблема со шлюзом*
+            ⚠️ <b>LTE_1: обнаружена проблема со шлюзом</b>
 
             {% if problem_lte -%}
-            🔴 *WAN_LTE_MIKROTIK_DHCP* (Tier 1, через MikroTik ATL LTE18)
-            Статус: `{{ status_lte }}`
+            🔴 <b>WAN_LTE_MIKROTIK_DHCP</b> (Tier 1, через MikroTik ATL LTE18)
+            Статус: <code>{{ status_lte }}</code>
             Packet Loss: {{ loss_lte }}% (порог {{ loss_threshold }}%)
             Latency: {{ delay_lte }} ms
             {% endif %}
             {% if problem_dhcp -%}
-            🔴 *WAN_DHCP* (Tier 2)
-            Статус: `{{ status_dhcp }}`
+            🔴 <b>WAN_DHCP</b> (Tier 2)
+            Статус: <code>{{ status_dhcp }}</code>
             Packet Loss: {{ loss_dhcp }}% (порог {{ loss_threshold }}%)
             Latency: {{ delay_dhcp }} ms
             {% endif %}
@@ -184,7 +184,7 @@ automation:
             {% endif %}
 
             Отключить тревогу на 1 час: /mikrotik_silence
-          parse_mode: markdown
+          parse_mode: html
 
       - action: input_datetime.set_datetime
         target:
@@ -213,7 +213,7 @@ automation:
       down_duration_minutes: >-
         {% set ent = states.sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status %}
         {% if ent is not none and ent.state == 'down' and ent.last_changed is not none %}
-          {{ ((now() - ent.last_changed).total_seconds() / 60) | round(1) }}
+          {{ ((as_timestamp(now()) - as_timestamp(ent.last_changed)) / 60) | round(1) }}
         {% else %}
           0
         {% endif %}
@@ -222,7 +222,7 @@ automation:
         {% if last in ['unknown','unavailable', None, ''] %}
           999999
         {% else %}
-          {{ ((now() - (last | as_datetime)).total_seconds() / 60) | round(1) }}
+          {{ ((as_timestamp(now()) - as_timestamp(last)) / 60) | round(1) }}
         {% endif %}
     condition:
       - condition: template
@@ -243,12 +243,12 @@ automation:
 
       - action: telegram_bot.send_message
         data:
-          target: !secret telegram_chat_id
+          chat_id: !secret telegram_chat_id
           message: >-
-            🚨 *WAN_LTE_MIKROTIK_DHCP в down {{ down_duration_minutes }} мин*
+            🚨 <b>WAN_LTE_MIKROTIK_DHCP в down {{ down_duration_minutes }} мин</b>
             Выполняю перезагрузку MikroTik ATL LTE18 (192.168.188.1)...
             Перезагрузка №{{ reboot_count_today + 1 }} из {{ max_reboots }} на сегодня.
-          parse_mode: markdown
+          parse_mode: html
 
       # --- Собственно перезагрузка: штатная кнопка интеграции mikrotik ---
       - action: button.press
@@ -289,24 +289,24 @@ automation:
             sequence:
               - action: telegram_bot.send_message
                 data:
-                  target: !secret telegram_chat_id
+                  chat_id: !secret telegram_chat_id
                   message: >-
                     ✅ WAN_LTE_MIKROTIK_DHCP восстановлен после перезагрузки MikroTik.
-                    Текущий статус: `{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') }}`
-                  parse_mode: markdown
+                    Текущий статус: <code>{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') }}</code>
+                  parse_mode: html
         # Шлюз всё ещё down -> критическое уведомление
         default:
           - action: telegram_bot.send_message
             data:
-              target: !secret telegram_chat_id
+              chat_id: !secret telegram_chat_id
               message: >-
-                ❌ *КРИТИЧНО*: WAN_LTE_MIKROTIK_DHCP всё ещё `down` через
+                ❌ <b>КРИТИЧНО</b>: WAN_LTE_MIKROTIK_DHCP всё ещё <code>down</code> через
                 {{ post_reboot_wait_minutes }} мин после перезагрузки MikroTik.
                 Похоже на проблему провайдера / SIM / антенны, а не на
                 зависание роутера. Дальнейшие авто-перезагрузки ограничены
                 cooldown ({{ cooldown_minutes }} мин) и дневным лимитом
                 ({{ max_reboots }}). Требуется ручная проверка.
-              parse_mode: markdown
+              parse_mode: html
 
   - id: mikrotik_atlgm_lte_watchdog_circuit_breaker
     alias: "LTE Watchdog: лимит перезагрузок исчерпан"
@@ -333,9 +333,9 @@ automation:
           logger: custom.mikrotik_atlgm_lte_watchdog
       - action: telegram_bot.send_message
         data:
-          target: !secret telegram_chat_id
+          chat_id: !secret telegram_chat_id
           message: >-
-            🛑 *LTE Watchdog: авто-перезагрузки приостановлены*
+            🛑 <b>LTE Watchdog: авто-перезагрузки приостановлены</b>
             Достигнут суточный лимит перезагрузок MikroTik
             ({{ states('input_number.mikrotik_atlgm_lte_watchdog_max_reboots_per_day') }}),
             а WAN_LTE_MIKROTIK_DHCP всё ещё down.
@@ -343,7 +343,7 @@ automation:
             а не зависание роутера (например, неоплата SIM).
             Дальнейшие авто-перезагрузки не выполняются до 00:00 или до
             ручного сброса через /mikrotik_reset.
-          parse_mode: markdown
+          parse_mode: html
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_circuit_breaker_notified
@@ -390,8 +390,9 @@ automation:
           entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced
       - action: telegram_bot.send_message
         data:
-          target: !secret telegram_chat_id
+          chat_id: !secret telegram_chat_id
           message: "🔕 Уведомления и авто-перезагрузка MikroTik отключены на 1 час."
+          parse_mode: html
       - delay:
           hours: 1
       - action: input_boolean.turn_off
@@ -399,8 +400,9 @@ automation:
           entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced
       - action: telegram_bot.send_message
         data:
-          target: !secret telegram_chat_id
+          chat_id: !secret telegram_chat_id
           message: "🔔 Watchdog снова активен."
+          parse_mode: html
 
   - id: mikrotik_atlgm_lte_watchdog_telegram_reset
     alias: "LTE Watchdog: Telegram /mikrotik_reset"
@@ -427,5 +429,6 @@ automation:
           value: 0
       - action: telegram_bot.send_message
         data:
-          target: !secret telegram_chat_id
+          chat_id: !secret telegram_chat_id
           message: "♻️ Тревога и счётчик перезагрузок сброшены вручную."
+          parse_mode: html
