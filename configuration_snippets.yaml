@@ -1,0 +1,37 @@
+# ============================================================================
+# configuration_snippets.yaml
+# Добавить в configuration.yaml
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Логирование для отладки: события watchdog идут отдельным логгером
+# в home-assistant.log с уровнем debug/warning, чтобы удобно было
+# фильтровать (grep "mikrotik_atlgm_lte_watchdog" home-assistant.log)
+# ---------------------------------------------------------------------------
+logger:
+  default: warning
+  logs:
+    automation.mikrotik_atlgm_lte_watchdog_warning: debug
+    automation.mikrotik_atlgm_lte_watchdog_reboot: debug
+    custom.mikrotik_atlgm_lte_watchdog: debug
+
+# ---------------------------------------------------------------------------
+# ПРИМЕЧАНИЕ: rest_command для перезагрузки MikroTik по RouterOS REST API
+# больше не требуется — основной способ перезагрузки теперь штатная кнопка
+# интеграции mikrotik: button.qtronixlte_restart (см. automations файл).
+#
+# Ниже — ЗАПАСНОЙ вариант через REST API, на случай если интеграция mikrotik
+# перестанет отвечать, а прямой доступ к RouterOS ещё нужен. НЕ обязателен
+# к установке, включайте только если реально понадобится fallback-канал.
+#
+# rest_command:
+#   mikrotik_lte_reboot_fallback:
+#     url: "https://192.168.188.1/rest/system/reboot"
+#     method: POST
+#     username: !secret mikrotik_rest_user
+#     password: !secret mikrotik_rest_password
+#     verify_ssl: false
+#     content_type: "application/json"
+#     payload: "{}"
+#     timeout: 10
+# ---------------------------------------------------------------------------
