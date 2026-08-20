@@ -11,8 +11,8 @@
 logger:
   default: warning
   logs:
-    automation.mikrotik_atlgm_lte_watchdog_warning: debug
-    automation.mikrotik_atlgm_lte_watchdog_reboot: debug
+    homeassistant.components.automation.lte_watchdog_monitoring_shliuzov_warning: debug
+    homeassistant.components.automation.lte_watchdog_avto_perezagruzka_mikrotik: debug
     custom.mikrotik_atlgm_lte_watchdog: debug
 
 # ---------------------------------------------------------------------------
