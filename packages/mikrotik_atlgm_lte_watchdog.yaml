@@ -1,0 +1,431 @@
+# packages/mikrotik_atlgm_lte_watchdog.yaml
+#
+# Package HA: input_boolean/input_datetime/input_number/logger/automation
+# для watchdog-а LTE-шлюза MikroTik ATL LTE18 (ATLGM). Требует включённых
+# packages в configuration.yaml: homeassistant: packages: !include_dir_named packages
+#
+# Для второго роутера: скопировать файл, заменить префикс "atlgm" на новый
+# везде (entity_id helpers, id автоматизаций, entity_id устройства, логгер).
+
+input_boolean:
+  mikrotik_atlgm_lte_watchdog_alert_silenced:
+    name: "LTE Watchdog: тревога временно отключена"
+    icon: mdi:bell-off
+
+  mikrotik_atlgm_lte_watchdog_circuit_breaker_notified:
+    name: "LTE Watchdog: уведомление о лимите перезагрузок отправлено"
+    icon: mdi:flash-alert
+    # Служебный флаг, чтобы не спамить критическим алертом каждую минуту
+    # после достижения дневного лимита перезагрузок
+
+input_datetime:
+  mikrotik_atlgm_lte_last_reboot:
+    name: "MikroTik: время последней автоперезагрузки"
+    has_date: true
+    has_time: true
+
+  mikrotik_atlgm_lte_last_warning:
+    name: "LTE Watchdog: время последнего предупреждения"
+    has_date: true
+    has_time: true
+
+input_number:
+  # --- X: порог packet loss (%) при котором шлюз считается проблемным ---
+  mikrotik_atlgm_lte_watchdog_packet_loss_threshold:
+    name: "LTE Watchdog: порог Packet Loss"
+    min: 1
+    max: 100
+    step: 1
+    initial: 20
+    unit_of_measurement: "%"
+    icon: mdi:percent-outline
+
+  # --- Y: сколько минут WAN_LTE_MIKROTIK_DHCP должен быть в down, чтобы стартовала перезагрузка ---
+  mikrotik_atlgm_lte_watchdog_down_minutes_before_reboot:
+    name: "LTE Watchdog: время down до перезагрузки"
+    min: 2
+    max: 120
+    step: 1
+    initial: 10
+    unit_of_measurement: "мин"
+    icon: mdi:timer-alert-outline
+
+  # --- Z: пауза после перезагрузки перед проверкой восстановления ---
+  mikrotik_atlgm_lte_watchdog_post_reboot_wait_minutes:
+    name: "LTE Watchdog: ожидание после перезагрузки"
+    min: 1
+    max: 30
+    step: 1
+    initial: 5
+    unit_of_measurement: "мин"
+    icon: mdi:timer-sand
+
+  # --- Минимальный интервал между двумя перезагрузками (защита от flapping) ---
+  mikrotik_atlgm_lte_watchdog_reboot_cooldown_minutes:
+    name: "LTE Watchdog: cooldown между перезагрузками"
+    min: 5
+    max: 720
+    step: 5
+    initial: 30
+    unit_of_measurement: "мин"
+    icon: mdi:timer-lock-outline
+
+  # --- Максимум перезагрузок в сутки (защита от бесконечного цикла при аварии оператора) ---
+  mikrotik_atlgm_lte_watchdog_max_reboots_per_day:
+    name: "LTE Watchdog: макс. перезагрузок в сутки"
+    min: 1
+    max: 20
+    step: 1
+    initial: 3
+    icon: mdi:counter
+
+  # --- Как часто повторять warning-уведомление, пока проблема не устранена ---
+  mikrotik_atlgm_lte_watchdog_warning_repeat_minutes:
+    name: "LTE Watchdog: повтор предупреждения не чаще чем раз в"
+    min: 5
+    max: 240
+    step: 5
+    initial: 30
+    unit_of_measurement: "мин"
+    icon: mdi:repeat
+
+  # --- Счётчик перезагрузок за текущие сутки, сбрасывается автоматизацией в 00:00 ---
+  mikrotik_atlgm_lte_reboot_count_today:
+    name: "MikroTik: перезагрузок сегодня"
+    min: 0
+    max: 20
+    step: 1
+    initial: 0
+    icon: mdi:restart-alert
+
+logger:
+  default: warning
+  logs:
+    automation.mikrotik_atlgm_lte_watchdog_warning_monitor: debug
+    automation.mikrotik_atlgm_lte_watchdog_auto_reboot: debug
+    custom.mikrotik_atlgm_lte_watchdog: debug
+
+automation:
+  - id: mikrotik_atlgm_lte_watchdog_warning_monitor
+    alias: "LTE Watchdog: мониторинг шлюзов (warning)"
+    description: >-
+      Периодически проверяет WAN_LTE_MIKROTIK_DHCP и WAN_DHCP из группы
+      LTE_1 на статус down или превышение порога packet loss, шлёт
+      предупреждение в Telegram.
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/5"          # <-- периодичность проверки, правьте здесь
+    variables:
+      loss_threshold: "{{ states('input_number.mikrotik_atlgm_lte_watchdog_packet_loss_threshold') | float(20) }}"
+      repeat_minutes: "{{ states('input_number.mikrotik_atlgm_lte_watchdog_warning_repeat_minutes') | float(30) }}"
+      status_lte: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') }}"
+      status_dhcp: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_dhcp_status') }}"
+      loss_lte: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_loss') | float(0) }}"
+      loss_dhcp: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_dhcp_loss') | float(0) }}"
+      delay_lte: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_delay') }}"
+      delay_dhcp: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_dhcp_delay') }}"
+      problem_lte: >-
+        {{ status_lte not in ['unknown','unavailable', None]
+           and (status_lte == 'down' or loss_lte > loss_threshold) }}
+      problem_dhcp: >-
+        {{ status_dhcp not in ['unknown','unavailable', None]
+           and (status_dhcp == 'down' or loss_dhcp > loss_threshold) }}
+      any_problem: "{{ problem_lte or problem_dhcp }}"
+      minutes_since_last_warning: >-
+        {% set last = states('input_datetime.mikrotik_atlgm_lte_last_warning') %}
+        {% if last in ['unknown','unavailable', None, ''] %}
+          999999
+        {% else %}
+          {{ ((now() - (last | as_datetime)).total_seconds() / 60) | round(1) }}
+        {% endif %}
+    condition:
+      - condition: template
+        value_template: >-
+          {{ any_problem and (minutes_since_last_warning | float >= repeat_minutes) }}
+    action:
+      - action: system_log.write
+        data:
+          message: >-
+            [mikrotik_atlgm_lte_watchdog] WARNING: LTE(status={{ status_lte }},
+            loss={{ loss_lte }}%, delay={{ delay_lte }}ms)
+            DHCP(status={{ status_dhcp }}, loss={{ loss_dhcp }}%,
+            delay={{ delay_dhcp }}ms) threshold={{ loss_threshold }}%
+          level: warning
+          logger: custom.mikrotik_atlgm_lte_watchdog
+
+      - condition: template
+        value_template: "{{ not is_state('input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced', 'on') }}"
+
+      - action: telegram_bot.send_message
+        data:
+          target: !secret telegram_chat_id
+          message: >-
+            ⚠️ *LTE_1: обнаружена проблема со шлюзом*
+
+            {% if problem_lte -%}
+            🔴 *WAN_LTE_MIKROTIK_DHCP* (Tier 1, через MikroTik ATL LTE18)
+            Статус: `{{ status_lte }}`
+            Packet Loss: {{ loss_lte }}% (порог {{ loss_threshold }}%)
+            Latency: {{ delay_lte }} ms
+            {% endif %}
+            {% if problem_dhcp -%}
+            🔴 *WAN_DHCP* (Tier 2)
+            Статус: `{{ status_dhcp }}`
+            Packet Loss: {{ loss_dhcp }}% (порог {{ loss_threshold }}%)
+            Latency: {{ delay_dhcp }} ms
+            {% endif %}
+
+            Действие: только мониторинг.
+            {% if problem_lte and status_lte == 'down' -%}
+            Если WAN_LTE_MIKROTIK_DHCP останется в down дольше
+            {{ states('input_number.mikrotik_atlgm_lte_watchdog_down_minutes_before_reboot') }} мин
+            - будет выполнена автоматическая перезагрузка MikroTik.
+            {% endif %}
+
+            Отключить тревогу на 1 час: /mikrotik_silence
+          parse_mode: markdown
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.mikrotik_atlgm_lte_last_warning
+        data:
+          timestamp: "{{ now().timestamp() }}"
+
+  - id: mikrotik_atlgm_lte_watchdog_auto_reboot
+    alias: "LTE Watchdog: авто-перезагрузка MikroTik"
+    description: >-
+      Перезагружает MikroTik ATL LTE18 через button.qtronixlte_restart
+      (интеграция mikrotik), если WAN_LTE_MIKROTIK_DHCP
+      находится в down дольше заданного времени, с защитой от частых
+      перезагрузок (cooldown + дневной лимит).
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/1"          # <-- периодичность проверки, правьте здесь
+    variables:
+      down_threshold_minutes: "{{ states('input_number.mikrotik_atlgm_lte_watchdog_down_minutes_before_reboot') | float(10) }}"
+      cooldown_minutes: "{{ states('input_number.mikrotik_atlgm_lte_watchdog_reboot_cooldown_minutes') | float(30) }}"
+      max_reboots: "{{ states('input_number.mikrotik_atlgm_lte_watchdog_max_reboots_per_day') | int(3) }}"
+      post_reboot_wait_minutes: "{{ states('input_number.mikrotik_atlgm_lte_watchdog_post_reboot_wait_minutes') | int(5) }}"
+      reboot_count_today: "{{ states('input_number.mikrotik_atlgm_lte_reboot_count_today') | int(0) }}"
+      status_lte: "{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') }}"
+      down_duration_minutes: >-
+        {% set ent = states.sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status %}
+        {% if ent is not none and ent.state == 'down' and ent.last_changed is not none %}
+          {{ ((now() - ent.last_changed).total_seconds() / 60) | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+      minutes_since_last_reboot: >-
+        {% set last = states('input_datetime.mikrotik_atlgm_lte_last_reboot') %}
+        {% if last in ['unknown','unavailable', None, ''] %}
+          999999
+        {% else %}
+          {{ ((now() - (last | as_datetime)).total_seconds() / 60) | round(1) }}
+        {% endif %}
+    condition:
+      - condition: template
+        value_template: >-
+          {{ status_lte == 'down'
+             and down_duration_minutes | float >= down_threshold_minutes
+             and minutes_since_last_reboot | float >= cooldown_minutes
+             and reboot_count_today < max_reboots
+             and not is_state('input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced', 'on') }}
+    action:
+      - action: system_log.write
+        data:
+          message: >-
+            [mikrotik_atlgm_lte_watchdog] REBOOT TRIGGERED: down_duration={{ down_duration_minutes }}min
+            (threshold {{ down_threshold_minutes }}min), reboot_count_today={{ reboot_count_today }}/{{ max_reboots }}
+          level: warning
+          logger: custom.mikrotik_atlgm_lte_watchdog
+
+      - action: telegram_bot.send_message
+        data:
+          target: !secret telegram_chat_id
+          message: >-
+            🚨 *WAN_LTE_MIKROTIK_DHCP в down {{ down_duration_minutes }} мин*
+            Выполняю перезагрузку MikroTik ATL LTE18 (192.168.188.1)...
+            Перезагрузка №{{ reboot_count_today + 1 }} из {{ max_reboots }} на сегодня.
+          parse_mode: markdown
+
+      # --- Собственно перезагрузка: штатная кнопка интеграции mikrotik ---
+      - action: button.press
+        target:
+          entity_id: button.qtronixlte_restart
+        data: {}
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.mikrotik_atlgm_lte_last_reboot
+        data:
+          timestamp: "{{ now().timestamp() }}"
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.mikrotik_atlgm_lte_reboot_count_today
+        data:
+          value: "{{ reboot_count_today + 1 }}"
+
+      # --- Пауза Z минут перед проверкой восстановления ---
+      - delay:
+          minutes: "{{ post_reboot_wait_minutes }}"
+
+      - action: system_log.write
+        data:
+          message: >-
+            [mikrotik_atlgm_lte_watchdog] Post-reboot check: status={{
+            states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') }}
+          level: info
+          logger: custom.mikrotik_atlgm_lte_watchdog
+
+      - choose:
+          # Шлюз поднялся -> сообщение о восстановлении
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') != 'down' }}
+            sequence:
+              - action: telegram_bot.send_message
+                data:
+                  target: !secret telegram_chat_id
+                  message: >-
+                    ✅ WAN_LTE_MIKROTIK_DHCP восстановлен после перезагрузки MikroTik.
+                    Текущий статус: `{{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') }}`
+                  parse_mode: markdown
+        # Шлюз всё ещё down -> критическое уведомление
+        default:
+          - action: telegram_bot.send_message
+            data:
+              target: !secret telegram_chat_id
+              message: >-
+                ❌ *КРИТИЧНО*: WAN_LTE_MIKROTIK_DHCP всё ещё `down` через
+                {{ post_reboot_wait_minutes }} мин после перезагрузки MikroTik.
+                Похоже на проблему провайдера / SIM / антенны, а не на
+                зависание роутера. Дальнейшие авто-перезагрузки ограничены
+                cooldown ({{ cooldown_minutes }} мин) и дневным лимитом
+                ({{ max_reboots }}). Требуется ручная проверка.
+              parse_mode: markdown
+
+  - id: mikrotik_atlgm_lte_watchdog_circuit_breaker
+    alias: "LTE Watchdog: лимит перезагрузок исчерпан"
+    description: >-
+      Если дневной лимит перезагрузок исчерпан, а шлюз всё ещё down - шлёт
+      одно дополнительное критическое уведомление (не спамит каждые 5 минут)
+      о вероятной проблеме на стороне провайдера, а не роутера.
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "/5"
+    condition:
+      - condition: template
+        value_template: >-
+          {{ states('sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status') == 'down'
+             and states('input_number.mikrotik_atlgm_lte_reboot_count_today') | int(0)
+                 >= states('input_number.mikrotik_atlgm_lte_watchdog_max_reboots_per_day') | int(3)
+             and not is_state('input_boolean.mikrotik_atlgm_lte_watchdog_circuit_breaker_notified', 'on') }}
+    action:
+      - action: system_log.write
+        data:
+          message: "[mikrotik_atlgm_lte_watchdog] Circuit breaker: дневной лимит перезагрузок исчерпан"
+          level: error
+          logger: custom.mikrotik_atlgm_lte_watchdog
+      - action: telegram_bot.send_message
+        data:
+          target: !secret telegram_chat_id
+          message: >-
+            🛑 *LTE Watchdog: авто-перезагрузки приостановлены*
+            Достигнут суточный лимит перезагрузок MikroTik
+            ({{ states('input_number.mikrotik_atlgm_lte_watchdog_max_reboots_per_day') }}),
+            а WAN_LTE_MIKROTIK_DHCP всё ещё down.
+            Вероятная причина: авария/блокировка на стороне оператора связи,
+            а не зависание роутера (например, неоплата SIM).
+            Дальнейшие авто-перезагрузки не выполняются до 00:00 или до
+            ручного сброса через /mikrotik_reset.
+          parse_mode: markdown
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_circuit_breaker_notified
+
+  - id: mikrotik_atlgm_lte_watchdog_daily_reset
+    alias: "LTE Watchdog: сброс счётчика перезагрузок в 00:00"
+    description: "Ежесуточный сброс счётчика перезагрузок и флага circuit breaker."
+    mode: single
+    trigger:
+      - platform: time
+        at: "00:00:00"
+    action:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.mikrotik_atlgm_lte_reboot_count_today
+        data:
+          value: 0
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_circuit_breaker_notified
+      - action: system_log.write
+        data:
+          message: "[mikrotik_atlgm_lte_watchdog] Суточный счётчик перезагрузок сброшен"
+          level: info
+          logger: custom.mikrotik_atlgm_lte_watchdog
+
+  - id: mikrotik_atlgm_lte_watchdog_telegram_silence
+    alias: "LTE Watchdog: Telegram /mikrotik_silence"
+    description: >-
+      Ручное управление через Telegram-команды: /mikrotik_silence отключает
+      уведомления и авто-reboot на 1 час, /mikrotik_reset снимает silence и
+      сбрасывает дневной счётчик и circuit breaker (см. отдельную
+      автоматизацию mikrotik_atlgm_lte_watchdog_telegram_reset). Требует,
+      чтобы бот был добавлен в allowed_chat_ids и подписан на команды.
+    mode: single
+    trigger:
+      - platform: event
+        event_type: telegram_command
+        event_data:
+          command: "/mikrotik_silence"
+    action:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced
+      - action: telegram_bot.send_message
+        data:
+          target: !secret telegram_chat_id
+          message: "🔕 Уведомления и авто-перезагрузка MikroTik отключены на 1 час."
+      - delay:
+          hours: 1
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced
+      - action: telegram_bot.send_message
+        data:
+          target: !secret telegram_chat_id
+          message: "🔔 Watchdog снова активен."
+
+  - id: mikrotik_atlgm_lte_watchdog_telegram_reset
+    alias: "LTE Watchdog: Telegram /mikrotik_reset"
+    description: >-
+      Ручной сброс через Telegram-команду /mikrotik_reset: снимает silence,
+      сбрасывает дневной счётчик перезагрузок и флаг circuit breaker.
+    mode: single
+    trigger:
+      - platform: event
+        event_type: telegram_command
+        event_data:
+          command: "/mikrotik_reset"
+    action:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_alert_silenced
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.mikrotik_atlgm_lte_watchdog_circuit_breaker_notified
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.mikrotik_atlgm_lte_reboot_count_today
+        data:
+          value: 0
+      - action: telegram_bot.send_message
+        data:
+          target: !secret telegram_chat_id
+          message: "♻️ Тревога и счётчик перезагрузок сброшены вручную."
