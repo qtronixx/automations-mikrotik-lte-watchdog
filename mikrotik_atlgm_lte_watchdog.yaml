@@ -55,6 +55,15 @@ input_datetime:
     has_date: true
     has_time: true
 
+  mikrotik_atlgm_lte_watchdog_ha_started_at:
+    name: "LTE Watchdog: время последнего старта HA"
+    has_date: true
+    has_time: true
+    # Используется только для grace-периода в integration_health_monitor -
+    # чтобы не выдавать ложный алерт о недоступности MikroTik/ESP в первые
+    # минуты после рестарта HA, пока интеграции ещё не успели опросить
+    # свои устройства и entity временно висят unavailable
+
 input_number:
   # --- X: порог packet loss (%) при котором шлюз считается проблемным ---
   mikrotik_atlgm_lte_watchdog_packet_loss_threshold:
@@ -153,6 +162,23 @@ logger:
     custom.mikrotik_atlgm_lte_watchdog: debug
 
 automation:
+  - id: mikrotik_atlgm_lte_watchdog_mark_ha_start
+    alias: "LTE Watchdog: отметка времени старта HA"
+    description: >-
+      Фиксирует момент старта HA - используется только для grace-периода
+      в integration_health_monitor, чтобы не путать реальную недоступность
+      MikroTik/ESP с временной unavailable сразу после рестарта.
+    mode: single
+    trigger:
+      - platform: homeassistant
+        event: start
+    action:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.mikrotik_atlgm_lte_watchdog_ha_started_at
+        data:
+          timestamp: "{{ now().timestamp() }}"
+
   - id: mikrotik_atlgm_lte_watchdog_warning_monitor
     alias: "LTE Watchdog: мониторинг шлюзов (warning)"
     description: >-
@@ -672,6 +698,18 @@ automation:
         {{ states('button.mikrotik_atlgm_hard_power_cycle') in ['unavailable', 'unknown'] }}
       any_unreachable: "{{ soft_unreachable or hard_unreachable }}"
       already_alerted: "{{ is_state('input_boolean.mikrotik_atlgm_lte_watchdog_integration_alert_sent', 'on') }}"
+      minutes_since_ha_start: >-
+        {% set started = states('input_datetime.mikrotik_atlgm_lte_watchdog_ha_started_at') %}
+        {% if started in ['unknown', 'unavailable', None, ''] %}
+          999999
+        {% else %}
+          {{ ((as_timestamp(now()) - as_timestamp(started)) / 60) | round(1) }}
+        {% endif %}
+    condition:
+      # Grace-период 3 минуты после рестарта HA - интеграции ещё не успели
+      # опросить свои устройства, entity может ложно показывать unavailable
+      - condition: template
+        value_template: "{{ minutes_since_ha_start | float >= 3 }}"
     action:
       - choose:
           # --- Стало недоступно, ещё не предупреждали ---
