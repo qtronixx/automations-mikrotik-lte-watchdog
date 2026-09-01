@@ -1,30 +1,156 @@
-# ============================================================================
-# automations_mikrotik_lte_watchdog.yaml
+# packages/mikrotik_atlgm_lte_watchdog.yaml
 #
-# Добавить эти автоматизации в automations.yaml (или импортировать через
-# Настройки -> Автоматизации -> три точки -> Редактировать в YAML -> вставить
-# каждую по отдельности).
+# Package HA: input_boolean/input_datetime/input_number/logger/automation
+# для watchdog-а LTE-шлюза MikroTik ATL LTE18 (ATLGM). Требует включённых
+# packages в configuration.yaml: homeassistant: packages: !include_dir_named packages
 #
-# ТРЕБУЕМЫЕ ENTITY_ID (проверьте фактические имена у себя, если названия
-# loss/delay для LTE-шлюза отличаются от приведённого шаблона):
-#   sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_status
-#   sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_loss
-#   sensor.fw_village_qtronix_ru_gateway_wan_lte_mikrotik_dhcp_delay
-#   sensor.fw_village_qtronix_ru_gateway_wan_dhcp_status
-#   sensor.fw_village_qtronix_ru_gateway_wan_dhcp_loss
-#   sensor.fw_village_qtronix_ru_gateway_wan_dhcp_delay
-#
-# МЕСТА ПРАВКИ ИНТЕРВАЛОВ (нельзя вынести в input_number, т.к. Home Assistant
-# не поддерживает шаблоны в trigger.time_pattern):
-#   - Автоматизация 1: trigger time_pattern minutes: "/5"  -> периодичность
-#     проверки на предупреждения (по умолчанию раз в 5 минут)
-#   - Автоматизация 2: trigger time_pattern minutes: "/1"  -> периодичность
-#     проверки на необходимость перезагрузки (по умолчанию раз в 1 минуту,
-#     чтобы точнее ловить момент достижения Y минут в down)
-#
-# Все остальные пороги (X, Y, Z, cooldown, лимит перезагрузок) регулируются
-# через input_number из helpers.yaml прямо в интерфейсе HA.
-# ============================================================================
+# Для второго роутера: скопировать файл, заменить префикс "atlgm" на новый
+# везде (entity_id helpers, id автоматизаций, entity_id устройства, логгер).
+
+input_boolean:
+  mikrotik_atlgm_lte_watchdog_alert_silenced:
+    name: "LTE Watchdog: тревога временно отключена"
+    icon: mdi:bell-off
+
+  mikrotik_atlgm_lte_watchdog_circuit_breaker_notified:
+    name: "LTE Watchdog: уведомление о лимите перезагрузок отправлено"
+    icon: mdi:flash-alert
+    # Служебный флаг, чтобы не спамить критическим алертом каждую минуту
+    # после достижения дневного лимита перезагрузок
+
+  mikrotik_atlgm_lte_watchdog_muted:
+    name: "LTE Watchdog: оповещения отключены до восстановления/сброса"
+    icon: mdi:bell-cancel
+    # В отличие от alert_silenced (авто-снятие через 1 час), этот флаг
+    # снимается ТОЛЬКО вручную (/mikrotik_reset) либо автоматически, когда
+    # шлюз сам придёт в норму (см. автоматизацию recovery_watch) - удобно
+    # на время длительной известной проблемы (например, неоплата SIM)
+
+  mikrotik_atlgm_lte_watchdog_integration_alert_sent:
+    name: "LTE Watchdog: уведомление о недоступности MikroTik/ESP отправлено"
+    icon: mdi:link-off
+    # Служебный флаг, чтобы не спамить алертом каждые 5 минут, пока
+    # интеграция mikrotik или ESP хард-ресета недоступны
+
+input_select:
+  mikrotik_atlgm_lte_watchdog_stage:
+    name: "LTE Watchdog: текущая стадия (для LED)"
+    options:
+      - online
+      - degraded
+      - soft_reset
+      - hard_reset
+      - police
+    initial: online
+    icon: mdi:led-on
+
+input_datetime:
+  mikrotik_atlgm_lte_last_reboot:
+    name: "MikroTik: время последней автоперезагрузки"
+    has_date: true
+    has_time: true
+
+  mikrotik_atlgm_lte_last_warning:
+    name: "LTE Watchdog: время последнего предупреждения"
+    has_date: true
+    has_time: true
+
+input_number:
+  # --- X: порог packet loss (%) при котором шлюз считается проблемным ---
+  mikrotik_atlgm_lte_watchdog_packet_loss_threshold:
+    name: "LTE Watchdog: порог Packet Loss"
+    min: 1
+    max: 100
+    step: 1
+    initial: 20
+    unit_of_measurement: "%"
+    icon: mdi:percent-outline
+
+  # --- Y: сколько минут WAN_LTE_MIKROTIK_DHCP должен быть в down, чтобы стартовала перезагрузка ---
+  mikrotik_atlgm_lte_watchdog_down_minutes_before_reboot:
+    name: "LTE Watchdog: время down до перезагрузки"
+    min: 2
+    max: 120
+    step: 1
+    initial: 10
+    unit_of_measurement: "мин"
+    icon: mdi:timer-alert-outline
+
+  # --- Z: пауза после перезагрузки перед проверкой восстановления ---
+  mikrotik_atlgm_lte_watchdog_post_reboot_wait_minutes:
+    name: "LTE Watchdog: ожидание после перезагрузки"
+    min: 1
+    max: 30
+    step: 1
+    initial: 5
+    unit_of_measurement: "мин"
+    icon: mdi:timer-sand
+
+  # --- Минимальный интервал между двумя перезагрузками (защита от flapping) ---
+  # --- Минимальный интервал между двумя СОФТ-перезагрузками ---
+  mikrotik_atlgm_lte_watchdog_soft_reboot_cooldown_minutes:
+    name: "LTE Watchdog: cooldown между софт-перезагрузками"
+    min: 5
+    max: 120
+    step: 5
+    initial: 10
+    unit_of_measurement: "мин"
+    icon: mdi:timer-lock-outline
+
+  # --- После какой попытки подряд эскалировать на аппаратный обрыв питания ---
+  # По умолчанию 3: попытки №1 и №2 - софт-ребут, начиная с №3 - хард-ресет.
+  mikrotik_atlgm_lte_watchdog_hard_reset_after_attempt:
+    name: "LTE Watchdog: номер попытки для перехода на хард-ресет"
+    min: 2
+    max: 10
+    step: 1
+    initial: 3
+    icon: mdi:flash-alert-outline
+
+  # --- Ожидание/cooldown после АППАРАТНОГО обрыва питания (холодный старт
+  # LTE-модуля занимает намного дольше, чем софт-ребут) ---
+  mikrotik_atlgm_lte_watchdog_hard_reset_post_wait_minutes:
+    name: "LTE Watchdog: ожидание/cooldown после хард-ресета"
+    min: 10
+    max: 120
+    step: 5
+    initial: 30
+    unit_of_measurement: "мин"
+    icon: mdi:timer-sand-complete
+
+  mikrotik_atlgm_lte_watchdog_max_reboots_per_day:
+    name: "LTE Watchdog: макс. перезагрузок в сутки"
+    min: 1
+    max: 20
+    step: 1
+    initial: 5   # 2 софт + 3 хард (45с, 5мин, 10мин) - см. эскалацию длительности
+    icon: mdi:counter
+
+  # --- Как часто повторять warning-уведомление, пока проблема не устранена ---
+  mikrotik_atlgm_lte_watchdog_warning_repeat_minutes:
+    name: "LTE Watchdog: повтор предупреждения не чаще чем раз в"
+    min: 5
+    max: 240
+    step: 5
+    initial: 30
+    unit_of_measurement: "мин"
+    icon: mdi:repeat
+
+  # --- Счётчик перезагрузок за текущие сутки, сбрасывается автоматизацией в 00:00 ---
+  mikrotik_atlgm_lte_reboot_count_today:
+    name: "MikroTik: перезагрузок сегодня"
+    min: 0
+    max: 20
+    step: 1
+    initial: 0
+    icon: mdi:restart-alert
+
+logger:
+  default: warning
+  logs:
+    homeassistant.components.automation.lte_watchdog_monitoring_shliuzov_warning: debug
+    homeassistant.components.automation.lte_watchdog_avto_perezagruzka_mikrotik: debug
+    custom.mikrotik_atlgm_lte_watchdog: debug
 
 automation:
   - id: mikrotik_atlgm_lte_watchdog_warning_monitor

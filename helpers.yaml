@@ -4,8 +4,8 @@
 # Устройства и службы -> Помощники -> Создать помощника, тип соответствующий)
 #
 # Эти сущности дают возможность менять X (порог packet loss), Y (минуты до 
-# перезагрузки), Z (пауза после перезагрузки), cooldown и лимит перезагрузок 
-# прямо из интерфейса HA, без правки YAML.
+# перезагрузки), Z (пауза после перезагрузки), cooldown, лимит перезагрузок
+# и LED-стадию прямо из интерфейса HA, без правки YAML.
 # ============================================================================
 
 input_boolean:
@@ -18,6 +18,32 @@ input_boolean:
     icon: mdi:flash-alert
     # Служебный флаг, чтобы не спамить критическим алертом каждую минуту
     # после достижения дневного лимита перезагрузок
+
+  mikrotik_atlgm_lte_watchdog_muted:
+    name: "LTE Watchdog: оповещения отключены до восстановления/сброса"
+    icon: mdi:bell-cancel
+    # В отличие от alert_silenced (авто-снятие через 1 час), этот флаг
+    # снимается ТОЛЬКО вручную (/mikrotik_reset) либо автоматически, когда
+    # шлюз сам придёт в норму (см. автоматизацию recovery_watch) - удобно
+    # на время длительной известной проблемы (например, неоплата SIM)
+
+  mikrotik_atlgm_lte_watchdog_integration_alert_sent:
+    name: "LTE Watchdog: уведомление о недоступности MikroTik/ESP отправлено"
+    icon: mdi:link-off
+    # Служебный флаг, чтобы не спамить алертом каждые 5 минут, пока
+    # интеграция mikrotik или ESP хард-ресета недоступны
+
+input_select:
+  mikrotik_atlgm_lte_watchdog_stage:
+    name: "LTE Watchdog: текущая стадия (для LED)"
+    options:
+      - online
+      - degraded
+      - soft_reset
+      - hard_reset
+      - police
+    initial: online
+    icon: mdi:led-on
 
 input_datetime:
   mikrotik_atlgm_lte_last_reboot:
@@ -62,22 +88,43 @@ input_number:
     icon: mdi:timer-sand
 
   # --- Минимальный интервал между двумя перезагрузками (защита от flapping) ---
-  mikrotik_atlgm_lte_watchdog_reboot_cooldown_minutes:
-    name: "LTE Watchdog: cooldown между перезагрузками"
+  # --- Минимальный интервал между двумя СОФТ-перезагрузками ---
+  mikrotik_atlgm_lte_watchdog_soft_reboot_cooldown_minutes:
+    name: "LTE Watchdog: cooldown между софт-перезагрузками"
     min: 5
-    max: 720
+    max: 120
     step: 5
-    initial: 30
+    initial: 10
     unit_of_measurement: "мин"
     icon: mdi:timer-lock-outline
 
-  # --- Максимум перезагрузок в сутки (защита от бесконечного цикла при аварии оператора) ---
+  # --- После какой попытки подряд эскалировать на аппаратный обрыв питания ---
+  # По умолчанию 3: попытки №1 и №2 - софт-ребут, начиная с №3 - хард-ресет.
+  mikrotik_atlgm_lte_watchdog_hard_reset_after_attempt:
+    name: "LTE Watchdog: номер попытки для перехода на хард-ресет"
+    min: 2
+    max: 10
+    step: 1
+    initial: 3
+    icon: mdi:flash-alert-outline
+
+  # --- Ожидание/cooldown после АППАРАТНОГО обрыва питания (холодный старт
+  # LTE-модуля занимает намного дольше, чем софт-ребут) ---
+  mikrotik_atlgm_lte_watchdog_hard_reset_post_wait_minutes:
+    name: "LTE Watchdog: ожидание/cooldown после хард-ресета"
+    min: 10
+    max: 120
+    step: 5
+    initial: 30
+    unit_of_measurement: "мин"
+    icon: mdi:timer-sand-complete
+
   mikrotik_atlgm_lte_watchdog_max_reboots_per_day:
     name: "LTE Watchdog: макс. перезагрузок в сутки"
     min: 1
     max: 20
     step: 1
-    initial: 3
+    initial: 5   # 2 софт + 3 хард (45с, 5мин, 10мин) - см. эскалацию длительности
     icon: mdi:counter
 
   # --- Как часто повторять warning-уведомление, пока проблема не устранена ---
@@ -98,3 +145,4 @@ input_number:
     step: 1
     initial: 0
     icon: mdi:restart-alert
+
