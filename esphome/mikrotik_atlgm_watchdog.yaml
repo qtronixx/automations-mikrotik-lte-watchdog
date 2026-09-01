@@ -1,0 +1,242 @@
+# ============================================================================
+# esphome/mikrotik_atlgm_watchdog.yaml
+#
+# ЕДИНОЕ устройство на ESP32-S3: реле обрыва питания MikroTik + статусный
+# RGB LED, в одной прошивке. Вся "умная" логика (когда что делать) остаётся
+# в Home Assistant (packages/mikrotik_atlgm_lte_watchdog.yaml) — эта плата
+# только исполняет команды и предоставляет примитивы:
+#
+#   - switch.mikrotik_atlgm_relay_power        - прямое вкл/выкл питания
+#   - button.mikrotik_atlgm_hard_power_cycle   - атомарный цикл: выключить,
+#     подождать N сек, включить обратно. Весь цикл выполняется НА САМОЙ
+#     плате, переживает рестарт/потерю связи с HA.
+#   - number.mikrotik_atlgm_hard_reset_duration          - "стандартная"
+#     короткая длительность обрыва (30-60 сек, по умолчанию 45)
+#   - number.mikrotik_atlgm_hard_reset_override_seconds  - разовая
+#     ДЛИННАЯ длительность для конкретного следующего нажатия (в секундах;
+#     0 = использовать стандартную короткую). HA выставляет её перед
+#     button.press, когда нужен "долгий" хард-ресет (см. README, раздел
+#     про повторные хард-ресеты и ручную команду /mikrotik_hard_reset N).
+#     Автоматически сбрасывается обратно в 0 после каждого цикла.
+#   - light.mikrotik_atlgm_status_led - RGB-индикация состояния (эффекты
+#     по имени, вызываются из HA через light.turn_on(effect=...))
+#
+# ЕСЛИ У ВАС НЕ ESP32-S3 (например, обычный ESP32 без адресуемого LED,
+# или в принципе другая плата без RGB-диода) - закомментируйте секцию
+# "LED" целиком (блок `light:` со всеми effects) и связанную с ней
+# автоматизацию led_sync в packages/mikrotik_atlgm_lte_watchdog.yaml.
+# Реле/кнопка/number от наличия LED никак не зависят и будут работать
+# на любом ESP32/ESP8266 (для ESP8266 достаточно поменять `esp32:` на
+# `esp8266:` и `board:` на свою плату - секции switch/button/number
+# платформо-независимы).
+# ============================================================================
+
+esphome:
+  name: mikrotik-atlgm-watchdog
+  friendly_name: "MikroTik ATLGM Watchdog"
+  comment: "Реле обрыва питания + статусный RGB LED для MikroTik ATL LTE18"
+
+esp32:
+  board: esp32-s3-devkitc-1   # замените под свою плату, если другая
+  framework:
+    type: esp-idf   # рекомендуемый ESPHome фреймворк для ESP32-S3
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "MikroTik-Watchdog-Fallback"
+    password: !secret wifi_ap_fallback_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+  level: INFO
+
+# ============================================================================
+# РЕЛЕ ПИТАНИЯ
+#
+# Используйте реле в режиме NC (Normally Closed) в разрыве линии питания
+# роутера. В состоянии "реле обесточено" (плата зависла/потеряла своё
+# питание) контакт COM-NC должен быть ЗАМКНУТ - тогда отказ самой платы
+# не оставляет роутер без питания навсегда.
+# ============================================================================
+switch:
+  - platform: gpio
+    name: "MikroTik Power"
+    id: relay_power
+    pin:
+      number: GPIO4   # замените под свою распиновку; НЕ используйте GPIO48
+                       # (или другой пин вашего LED) во избежание конфликта
+      inverted: true   # большинство дешёвых реле-модулей active LOW;
+                        # уберите строку, если ваш модуль активен по HIGH
+    restore_mode: RESTORE_DEFAULT_ON   # fail-safe на уровне прошивки:
+                                        # после рестарта платы питание есть
+    icon: mdi:power-plug
+
+# ============================================================================
+# ДЛИТЕЛЬНОСТЬ ОБРЫВА ПИТАНИЯ
+# ============================================================================
+number:
+  # --- "Стандартная" короткая длительность (для попытки №1 в хард-тире
+  # и для команды /mikrotik_hard_reset без аргумента) ---
+  - platform: template
+    name: "MikroTik Hard Reset Duration"
+    id: hard_reset_duration_sec
+    unit_of_measurement: "s"
+    min_value: 30
+    max_value: 60
+    step: 5
+    initial_value: 45
+    optimistic: true
+    restore_value: true
+    icon: mdi:timer-outline
+
+  # --- Разовая ДЛИННАЯ длительность для следующего нажатия. HA выставляет
+  # её перед button.press, когда нужен долгий обрыв (эскалация повторных
+  # хард-ресетов, либо ручная команда /mikrotik_hard_reset <минуты>).
+  # 0 = использовать стандартную короткую (hard_reset_duration_sec).
+  # Специально НЕ restore_value - при перезагрузке платы всегда 0, чтобы
+  # случайно не "залипнуть" на длинной длительности навсегда. ---
+  - platform: template
+    name: "MikroTik Hard Reset Override Seconds"
+    id: hard_reset_override_sec
+    unit_of_measurement: "s"
+    min_value: 0
+    max_value: 1200   # 20 минут - разумный верхний предел
+    step: 30
+    initial_value: 0
+    optimistic: true
+    restore_value: false
+    icon: mdi:timer-cog-outline
+
+# ============================================================================
+# КНОПКА АППАРАТНОГО POWER-CYCLE
+# Выключить -> подождать (override, если >0, иначе стандартную длительность)
+# -> включить. Весь цикл выполняется на самой плате. После цикла override
+# автоматически сбрасывается в 0.
+# ============================================================================
+button:
+  - platform: template
+    name: "MikroTik Hard Power Cycle"
+    id: hard_power_cycle
+    icon: mdi:restart-alert
+    on_press:
+      - logger.log:
+          format: "Hard power cycle: выключаю питание MikroTik (override=%.0fs, default=%.0fs)"
+          args: ["id(hard_reset_override_sec).state", "id(hard_reset_duration_sec).state"]
+      - switch.turn_off: relay_power
+      - delay: !lambda |-
+          if (id(hard_reset_override_sec).state > 0) {
+            return (uint32_t)(id(hard_reset_override_sec).state * 1000);
+          } else {
+            return (uint32_t)(id(hard_reset_duration_sec).state * 1000);
+          }
+      - logger.log: "Hard power cycle: включаю питание MikroTik обратно"
+      - switch.turn_on: relay_power
+      # Сбрасываем override, чтобы следующее "обычное" нажатие снова
+      # использовало стандартную короткую длительность
+      - number.set:
+          id: hard_reset_override_sec
+          value: 0
+
+# ============================================================================
+# LED (закомментируйте весь блок ниже, если у вашей платы нет адресуемого
+# RGB LED или вы используете не ESP32-S3)
+# ============================================================================
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: "MikroTik Status LED"
+    pin: GPIO48   # типичный пин встроенного WS2812 на ESP32-S3-DevKitC-1 -
+                   # ОБЯЗАТЕЛЬНО проверьте свою плату (бывает GPIO38, GPIO21 и т.д.)
+    num_leds: 1
+    rgb_order: GRB
+    chipset: WS2812
+    default_transition_length: 0s
+    effects:
+      # --- online: канал в порядке - короткая зелёная вспышка раз в 2 сек ---
+      - strobe:
+          name: "Green Slow Blink"
+          colors:
+            - state: true
+              red: 0%
+              green: 100%
+              blue: 0%
+              duration: 200ms
+            - state: false
+              duration: 1800ms
+
+      # --- silence/mute: та же частота, но жёлтый ---
+      - strobe:
+          name: "Yellow Slow Blink"
+          colors:
+            - state: true
+              red: 100%
+              green: 75%
+              blue: 0%
+              duration: 200ms
+            - state: false
+              duration: 1800ms
+
+      # --- hard_reset: эскалация до обрыва питания - частое красное моргание ---
+      - strobe:
+          name: "Red Fast Blink"
+          colors:
+            - state: true
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 150ms
+            - state: false
+              duration: 150ms
+
+      # --- police: не поднялся даже после хард-ресетов - красный/синий
+      # попеременно, как аварийная сигнализация ---
+      - strobe:
+          name: "Police Red Blue"
+          colors:
+            - state: true
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 300ms
+            - state: true
+              red: 0%
+              green: 0%
+              blue: 100%
+              duration: 300ms
+
+      # --- integration_unreachable: HA потерял связь с MikroTik или с этой
+      # самой платой - фиолетовый, чтобы не путать с "красными" LTE-состояниями ---
+      - strobe:
+          name: "Purple Fast Blink"
+          colors:
+            - state: true
+              red: 60%
+              green: 0%
+              blue: 100%
+              duration: 150ms
+            - state: false
+              duration: 150ms
+
+# ---------------------------------------------------------------------------
+# Состояния "degraded" (сплошной жёлтый) и "soft_reset" (сплошной красный)
+# не требуют отдельного эффекта - HA вызывает light.turn_on с effect: "None"
+# и явным rgb_color.
+# ---------------------------------------------------------------------------
+
+sensor:
+  - platform: uptime
+    name: "MikroTik Watchdog ESP Uptime"
+    update_interval: 60s
+
+  - platform: wifi_signal
+    name: "MikroTik Watchdog ESP WiFi Signal"
+    update_interval: 60s
