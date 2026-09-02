@@ -56,6 +56,15 @@ input_datetime:
     has_date: true
     has_time: true
 
+  mikrotik_atlgm_lte_watchdog_ha_started_at:
+    name: "LTE Watchdog: время последнего старта HA"
+    has_date: true
+    has_time: true
+    # Используется только для grace-периода в integration_health_monitor -
+    # чтобы не выдавать ложный алерт о недоступности MikroTik/ESP в первые
+    # минуты после рестарта HA, пока интеграции ещё не успели опросить
+    # свои устройства и entity временно висят unavailable
+
 input_number:
   # --- X: порог packet loss (%) при котором шлюз считается проблемным ---
   mikrotik_atlgm_lte_watchdog_packet_loss_threshold:
