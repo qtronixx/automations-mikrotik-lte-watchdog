@@ -165,7 +165,7 @@ automation:
       Эскалация: попытки 1-2 - софт-ребут через button.qtronixlte_restart
       (cooldown между ними - soft_reboot_cooldown_minutes). Начиная с
       попытки hard_reset_after_attempt - аппаратный обрыв питания через
-      ESPHome button.mikrotik_atlgm_hard_power_cycle, с более долгим
+      ESPHome button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle, с более долгим
       ожиданием восстановления и cooldown (hard_reset_post_wait_minutes).
       Останавливается по достижении max_reboots_per_day.
     mode: single
@@ -184,7 +184,7 @@ automation:
       soft_button_unreachable: >-
         {{ states('button.qtronixlte_restart') in ['unavailable', 'unknown'] }}
       hard_button_unreachable: >-
-        {{ states('button.mikrotik_atlgm_hard_power_cycle') in ['unavailable', 'unknown'] }}
+        {{ states('button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle') in ['unavailable', 'unknown'] }}
       # Если софт-кнопка недоступна (интеграция mikrotik не отвечает) - нет
       # смысла тратить попытку на заведомо бесполезное нажатие в никуда,
       # сразу эскалируем на хард (если он доступен)
@@ -194,7 +194,7 @@ automation:
       # Иногда обрыва на 30-60 сек недостаточно (модем/вышка не успевают
       # "забыть" зависшую регистрацию) - тогда помогает более долгий обрыв.
       # 1-й хард-ресет (index=1) - короткий, по умолчанию 45 сек
-      # (number.mikrotik_atlgm_hard_reset_duration).
+      # (number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration).
       # 2-й (index=2) - 5 минут, 3-й (index=3) - 10 минут, и т.д.:
       # long_minutes = (index - 1) * 5.
       #
@@ -294,15 +294,15 @@ automation:
                 # Если этот хард-ресет эскалированный (долгий) - выставляем
                 # override в секундах на ESP перед нажатием. Если 0 - ESP
                 # сам использует свою стандартную короткую длительность
-                # (number.mikrotik_atlgm_hard_reset_duration).
+                # (number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration).
                 - action: number.set_value
                   target:
-                    entity_id: number.mikrotik_atlgm_hard_reset_override_seconds
+                    entity_id: number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds
                   data:
                     value: "{{ hard_reset_long_minutes * 60 }}"
                 - action: button.press
                   target:
-                    entity_id: button.mikrotik_atlgm_hard_power_cycle
+                    entity_id: button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle
                   data: {}
           # ---------------- СОФТ-РЕСЕТ (штатная кнопка) ----------------
           default:
@@ -560,7 +560,7 @@ automation:
       soft_unreachable: >-
         {{ states('button.qtronixlte_restart') in ['unavailable', 'unknown'] }}
       hard_unreachable: >-
-        {{ states('button.mikrotik_atlgm_hard_power_cycle') in ['unavailable', 'unknown'] }}
+        {{ states('button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle') in ['unavailable', 'unknown'] }}
       any_unreachable: "{{ soft_unreachable or hard_unreachable }}"
       already_alerted: "{{ is_state('input_boolean.mikrotik_atlgm_lte_watchdog_integration_alert_sent', 'on') }}"
       minutes_since_ha_start: >-
@@ -604,7 +604,7 @@ automation:
                     что интеграция вообще загружена).
                     {% endif %}
                     {% if hard_unreachable -%}
-                    - button.mikrotik_atlgm_hard_power_cycle недоступна: ESP
+                    - button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle недоступна: ESP
                     хард-ресета не в сети (проверьте питание/Wi-Fi ESP).
                     {% endif %}
                     Это НЕ проблема LTE-канала как такового - это проблема
@@ -614,7 +614,7 @@ automation:
                   parse_mode: html
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "Purple Fast Blink"
 
@@ -792,7 +792,7 @@ automation:
       Ручной немедленный аппаратный обрыв питания MikroTik через ESPHome
       по команде /mikrotik_hard_reset, в обход всех порогов и anti-flapping.
       Без аргумента - стандартная короткая длительность (см.
-      number.mikrotik_atlgm_hard_reset_duration). С числовым аргументом
+      number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration). С числовым аргументом
       в минутах (например, "/mikrotik_hard_reset 10") - обрыв питания на
       указанное число минут, полезно если известно, что короткий обрыв
       конкретно вашей вышке/модему не помогает.
@@ -835,7 +835,7 @@ automation:
             Питание будет отключено на {{ requested_minutes }} мин.
             {% else -%}
             Питание будет отключено на
-            {{ states('number.mikrotik_atlgm_hard_reset_duration') | float(45) | int }} сек
+            {{ states('number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration') | float(45) | int }} сек
             (стандартная длительность; укажите число минут после команды,
             например /mikrotik_hard_reset 10, для более долгого обрыва).
             {% endif %}
@@ -844,12 +844,12 @@ automation:
       # короткую длительность на самой ESP, иначе - запрошенное число минут
       - action: number.set_value
         target:
-          entity_id: number.mikrotik_atlgm_hard_reset_override_seconds
+          entity_id: number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds
         data:
           value: "{{ requested_seconds }}"
       - action: button.press
         target:
-          entity_id: button.mikrotik_atlgm_hard_power_cycle
+          entity_id: button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle
         data: {}
 
   # ==========================================================================
@@ -867,7 +867,7 @@ automation:
   - id: mikrotik_atlgm_lte_watchdog_led_sync
     alias: "LTE Watchdog: синхронизация LED"
     description: >-
-      Централизованно обновляет RGB LED на ESP32-S3 (light.mikrotik_atlgm_status_led)
+      Централизованно обновляет RGB LED на ESP32-S3 (light.mikrotik_atlgm_watchdog_mikrotik_status_led)
       в соответствии с текущей стадией и флагами silence/mute. Единая точка
       истины для визуальной индикации - все остальные автоматизации только
       меняют input_select/input_boolean, а фактическую команду на LED
@@ -883,7 +883,26 @@ automation:
       - platform: state
         entity_id: button.qtronixlte_restart
       - platform: state
-        entity_id: button.mikrotik_atlgm_hard_power_cycle
+        entity_id: button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle
+      - platform: state
+        # Если LED включили "в лоб" (тумблером на дашборде, голосом,
+        # физическим сбросом питания платы и т.п.) - без этого триггера он
+        # оставался бы гореть на полной яркости без эффекта (обычно белым),
+        # пока не произойдёт следующее изменение stage/silence/muted.
+        #
+        # ВАЖНО: from: обязателен и явно перечислен. Без него `to: "on"`
+        # срабатывает не только на реальный переход в "on", но и на ЛЮБОЕ
+        # обновление атрибутов, пока сущность уже "on" - в том числе на
+        # наш же вызов light.turn_on(effect=...) из этой самой автоматизации,
+        # что создавало самоподдерживающуюся петлю (эффект -> событие ->
+        # повторный вызов -> снова событие...), сбивавшую таймер анимации
+        # эффекта на ESP и визуально выглядевшую как хаотичное мигание.
+        entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
+        from:
+          - "off"
+          - "unavailable"
+          - "unknown"
+        to: "on"
       - platform: homeassistant
         event: start
     variables:
@@ -906,7 +925,7 @@ automation:
       # связи, а не ждёт до 5 минут следующего цикла integration_health_monitor.
       integration_unreachable: >-
         {{ (states('button.qtronixlte_restart') in ['unavailable', 'unknown']
-            or states('button.mikrotik_atlgm_hard_power_cycle') in ['unavailable', 'unknown'])
+            or states('button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle') in ['unavailable', 'unknown'])
            and minutes_since_ha_start | float >= 3 }}
       stage: "{{ states('input_select.mikrotik_atlgm_lte_watchdog_stage') }}"
     action:
@@ -918,7 +937,7 @@ automation:
             sequence:
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "Yellow Slow Blink"
 
@@ -931,7 +950,7 @@ automation:
             sequence:
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "Purple Fast Blink"
 
@@ -942,7 +961,7 @@ automation:
             sequence:
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "Police Red Blue"
 
@@ -953,7 +972,7 @@ automation:
             sequence:
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "Red Fast Blink"
 
@@ -964,7 +983,7 @@ automation:
             sequence:
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "None"
                   rgb_color: [255, 0, 0]
@@ -976,7 +995,7 @@ automation:
             sequence:
               - action: light.turn_on
                 target:
-                  entity_id: light.mikrotik_atlgm_status_led
+                  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
                 data:
                   effect: "None"
                   rgb_color: [255, 190, 0]
@@ -985,6 +1004,6 @@ automation:
         default:
           - action: light.turn_on
             target:
-              entity_id: light.mikrotik_atlgm_status_led
+              entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
             data:
               effect: "Green Slow Blink"
