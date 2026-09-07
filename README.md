@@ -19,6 +19,7 @@
 - [Регулируемые пороги](#регулируемые-пороги)
 - [Anti-flapping и авто-восстановление](#anti-flapping-и-авто-восстановление)
 - [Потеря связи HA с оборудованием — отдельный класс проблем](#потеря-связи-ha-с-оборудованием--отдельный-класс-проблем)
+- ["Сторож для сторожа": watchdog для самого Home Assistant](#сторож-для-сторожа-watchdog-для-самого-home-assistant)
 - [Управление вручную из Telegram](#управление-вручную-из-telegram)
 - [Тестирование перед продом](#тестирование-перед-продом)
 - [Логирование и отладка](#логирование-и-отладка)
@@ -77,7 +78,7 @@
 Иногда короткого обрыва (30-60 сек) недостаточно — модем/вышка не успевают "забыть" зависшую регистрацию в сети. Формула для N-го хард-ресета подряд (N считается от 1):
 
 ```
-N=1: стандартная короткая длительность (number.mikrotik_atlgm_hard_reset_duration, по умолчанию 45 сек)
+N=1: стандартная короткая длительность (number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration, по умолчанию 45 сек)
 N≥2: (N-1) × 5 минут   →   N=2: 5 мин, N=3: 10 мин, N=4: 15 мин, ...
 ```
 
@@ -85,7 +86,7 @@ N≥2: (N-1) × 5 минут   →   N=2: 5 мин, N=3: 10 мин, N=4: 15 ми
 
 **Ручной override:** независимо от автоматической эскалации, `/mikrotik_hard_reset <минуты>` форсирует конкретную длительность здесь и сейчас (например, `/mikrotik_hard_reset 15`), в обход формулы и порогов — полезно, если вы уже точно знаете, что вашей конкретной SIM/вышке нужен именно такой обрыв. `/mikrotik_hard_reset` без аргумента — стандартная короткая длительность.
 
-Технически это работает через ESPHome-сущность `number.mikrotik_atlgm_hard_reset_override_seconds` — HA выставляет её в секундах непосредственно перед `button.press`; 0 = использовать стандартную короткую длительность. После каждого цикла ESP сам сбрасывает override обратно в 0, чтобы значение не "залипало" на будущее.
+Технически это работает через ESPHome-сущность `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds` — HA выставляет её в секундах непосредственно перед `button.press`; 0 = использовать стандартную короткую длительность. После каждого цикла ESP сам сбрасывает override обратно в 0, чтобы значение не "залипало" на будущее.
 
 ## LED-индикация
 
@@ -113,11 +114,11 @@ N≥2: (N-1) × 5 минут   →   N=2: 5 мин, N=3: 10 мин, N=4: 15 ми
 ## Аппаратная часть: ESP32-S3 (реле + LED)
 
 Одна плата, один файл — `esphome/mikrotik_atlgm_watchdog.yaml`. Даёт:
-- `switch.mikrotik_atlgm_relay_power` — прямое вкл/выкл питания
-- `button.mikrotik_atlgm_hard_power_cycle` — атомарный цикл выключить → подождать → включить, **весь цикл на самой плате**, переживает рестарт/недоступность HA
-- `number.mikrotik_atlgm_hard_reset_duration` — стандартная короткая длительность (30-60 сек, дефолт 45)
-- `number.mikrotik_atlgm_hard_reset_override_seconds` — разовая длинная длительность для конкретного нажатия (см. [эскалацию выше](#эскалация-длительности-хард-ресета))
-- `light.mikrotik_atlgm_status_led` — RGB-индикация (5 именованных эффектов)
+- `switch.mikrotik_atlgm_watchdog_mikrotik_power` — прямое вкл/выкл питания
+- `button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle` — атомарный цикл выключить → подождать → включить, **весь цикл на самой плате**, переживает рестарт/недоступность HA
+- `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration` — стандартная короткая длительность (30-60 сек, дефолт 45)
+- `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds` — разовая длинная длительность для конкретного нажатия (см. [эскалацию выше](#эскалация-длительности-хард-ресета))
+- `light.mikrotik_atlgm_watchdog_mikrotik_status_led` — RGB-индикация (5 именованных эффектов)
 
 **Безопасная схема реле:** режим **NC** — обесточенное реле держит контакт замкнутым (питание есть), отказ платы не обесточивает роутер навсегда. Плюс `restore_mode: RESTORE_DEFAULT_ON` на уровне прошивки.
 
@@ -131,7 +132,7 @@ N≥2: (N-1) × 5 минут   →   N=2: 5 мин, N=3: 10 мин, N=4: 15 ми
 
 ### Проверка после прошивки
 
-Entity_id (`switch.mikrotik_atlgm_relay_power`, `button.mikrotik_atlgm_hard_power_cycle`, `number.mikrotik_atlgm_hard_reset_duration`, `number.mikrotik_atlgm_hard_reset_override_seconds`, `light.mikrotik_atlgm_status_led`) — имена из этого репозитория, ESPHome может присвоить их иначе в зависимости от версии интеграции. Сверьте через Developer Tools → States.
+Entity_id (`switch.mikrotik_atlgm_watchdog_mikrotik_power`, `button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle`, `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration`, `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds`, `light.mikrotik_atlgm_watchdog_mikrotik_status_led`) — имена из этого репозитория, **проверены на реальном устройстве**. Обратите внимание на структуру: ESPHome формирует entity_id как `<домен>.<имя_устройства>_<имя_сущности>` — например, устройство `mikrotik-atlgm-watchdog` (слаг `mikrotik_atlgm_watchdog`) + сущность `MikroTik Power` (слаг `mikrotik_power`) = `switch.mikrotik_atlgm_watchdog_mikrotik_power`. Если переименуете устройство (`esphome.name`) или сами сущности (`name:` внутри `switch:`/`button:`/`number:`/`light:`) — итоговые entity_id изменятся, и все ссылки на них в `packages/mikrotik_atlgm_lte_watchdog.yaml` придётся поправить вручную. Сверяйте через Developer Tools → States.
 
 ## Структура репозитория
 
@@ -167,8 +168,8 @@ homeassistant:
 ### 4. Проверьте сущности вручную
 
 - `button.press` → `button.qtronixlte_restart` — роутер должен перезагрузиться.
-- `button.press` → `button.mikrotik_atlgm_hard_power_cycle` — питание должно физически пропасть на заданное время.
-- `light.turn_on` → `light.mikrotik_atlgm_status_led` с `effect: "Green Slow Blink"` — светодиод должен замигать зелёным.
+- `button.press` → `button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle` — питание должно физически пропасть на заданное время.
+- `light.turn_on` → `light.mikrotik_atlgm_watchdog_mikrotik_status_led` с `effect: "Green Slow Blink"` — светодиод должен замигать зелёным.
 
 ### 5. Добавьте секрет для Telegram
 
@@ -197,10 +198,10 @@ telegram_chat_id: -1234567890
 | Entity статуса резервного шлюза | package | `sensor.fw_village_qtronix_ru_gateway_wan_dhcp_status` |
 | Entity packet loss / latency | package | `..._loss` / `..._delay` для каждого статуса выше |
 | Кнопка софт-перезагрузки | package, `auto_reboot` | `button.qtronixlte_restart` |
-| Кнопка хард-ресета (ESPHome) | package | `button.mikrotik_atlgm_hard_power_cycle` |
-| Override-длительность (ESPHome) | package, `auto_reboot`/`telegram_hard_reset` | `number.mikrotik_atlgm_hard_reset_override_seconds` |
-| Стандартная длительность (ESPHome) | package | `number.mikrotik_atlgm_hard_reset_duration` |
-| LED-сущность (ESPHome) | package, `led_sync` | `light.mikrotik_atlgm_status_led` |
+| Кнопка хард-ресета (ESPHome) | package | `button.mikrotik_atlgm_watchdog_mikrotik_hard_power_cycle` |
+| Override-длительность (ESPHome) | package, `auto_reboot`/`telegram_hard_reset` | `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds` |
+| Стандартная длительность (ESPHome) | package | `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration` |
+| LED-сущность (ESPHome) | package, `led_sync` | `light.mikrotik_atlgm_watchdog_mikrotik_status_led` |
 | Chat ID Telegram | `secrets.yaml` | `telegram_chat_id` |
 
 ## Регулируемые пороги
@@ -215,8 +216,8 @@ telegram_chat_id: -1234567890
 | Z2 — базовая пауза после хард-ресета | `input_number...hard_reset_post_wait_minutes` | 30 мин | К ней прибавляется сама длительность обрыва, если она эскалирована (5/10 мин) |
 | Лимит попыток в сутки | `input_number...max_reboots_per_day` | **5** | 2 софт + 3 хард (45с/5мин/10мин) |
 | Повтор warning | `input_number...warning_repeat_minutes` | 30 мин | |
-| Стандартная длительность обрыва | `number.mikrotik_atlgm_hard_reset_duration` (ESPHome) | 45 сек | Диапазон 30-60 |
-| Override-длительность | `number.mikrotik_atlgm_hard_reset_override_seconds` (ESPHome) | 0 (авто) | Диапазон 0-1200 сек (0-20 мин), выставляется автоматикой/командой |
+| Стандартная длительность обрыва | `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_duration` (ESPHome) | 45 сек | Диапазон 30-60 |
+| Override-длительность | `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds` (ESPHome) | 0 (авто) | Диапазон 0-1200 сек (0-20 мин), выставляется автоматикой/командой |
 | Интервал проверки warning/recovery_watch/integration_health | `time_pattern` | 5 мин | Правится только в YAML |
 | Интервал проверки reboot | `time_pattern` в `auto_reboot` | 1 мин | |
 
@@ -232,6 +233,48 @@ telegram_chat_id: -1234567890
 ## Потеря связи HA с оборудованием — отдельный класс проблем
 
 `integration_health_monitor` каждые 5 минут проверяет доступность управляющих кнопок; при потере — отдельное уведомление и фиолетовый LED; при восстановлении — подтверждение. `auto_reboot` форсирует хард-тир, если софт-кнопка недоступна, и пропускает попытку без траты cooldown/лимита, если недоступны обе.
+
+## "Сторож для сторожа": watchdog для самого Home Assistant
+
+Вся остальная логика в этом проекте сознательно живёт в HA — но что, если зависнет сам HA? Тогда некому будет ни следить за LTE, ни жать кнопки. Поэтому в `esphome/mikrotik_atlgm_watchdog.yaml` есть отдельный модуль, который **специально не управляется из HA** и не зависит от него: сама плата ESP32-S3 напрямую проверяет доступность HA, PVE и Unifi Controller и, если нужно, сама шлёт алерты в Telegram и сама дёргает Proxmox VE API.
+
+### Что делает
+
+- **HA (`10.98.98.6:8123`)** — проверка раз в минуту (`GET /manifest.json`). После 3 неудач подряд (~3 минуты): алерт в Telegram напрямую (не через HA — если HA завис, его `telegram_bot` тоже не ответит) + `POST` на PVE API `.../status/reset` — это жёсткий сброс виртуалки (аналог кнопки Reset на физическом сервере), а не аккуратный ACPI-reboot, потому что если HA завис намертво, штатный shutdown всё равно не сработает.
+- **Unifi Controller (LXC на том же PVE, `10.98.98.3:8443`)** — только оповещение, без действий.
+- **Proxmox VE (`10.98.98.2:8006`)** — только оповещение. Явно предупреждает: если сам PVE недоступен, авто-reset HA через его API тоже не сработает — это прямое следствие того, что MikroTik и PVE физически в разных серверных и реле на PVE пока нет (задел на будущее, когда доберётесь до второй серверной).
+
+### Anti-flapping
+
+- Не больше 3 авто-resets VM с HA в сутки (сбрасывается в 00:00 по SNTP-времени).
+- После каждой попытки reset — искусственный "откат" счётчика неудач (~10 минут при интервале проверки 60 сек), чтобы дать VM реально время подняться, прежде чем система снова сможет счесть её зависшей.
+
+### Настройка
+
+В `secrets.yaml` **папки ESPHome** (не HA!) добавьте:
+```yaml
+telegram_token: "123456789:AAExampleBotTokenHere"   # можно взять тот же токен, что уже в HA
+telegram_chat_id: "-1001234567890"
+pve_token_id: "root@pam!esp-watchdog"
+pve_token_secret: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+В самом `esphome/mikrotik_atlgm_watchdog.yaml`, в блоке `substitutions:`, замените:
+- `pve_node` — реальное имя ноды в PVE (Datacenter → имя узла слева в UI).
+- `pve_vmid` — реальный VMID виртуалки с Home Assistant.
+
+**Создание API-токена в PVE:** Datacenter → Permissions → API Tokens → Add. Токену нужно право `VM.PowerMgmt` (как минимум) на конкретную VM с HA — не выдавайте токену полные права администратора без необходимости. Снимите галку "Privilege Separation", только если осознанно понимаете последствия — лучше явно назначить роль с правом `VM.PowerMgmt` через Permissions → Add на пути `/vms/<vmid>`.
+
+### Если модуль не нужен
+
+Закомментируйте (или удалите) в файле блоки: `substitutions` (то, что относится к ha/pve/unifi), `time`, `http_request`, `globals`, `script`, `interval` — они помечены отдельным заголовком-комментарием в файле и не пересекаются с MikroTik-частью (реле/кнопка/number/LED), которая продолжит работать как есть.
+
+### Ограничения этого модуля
+
+- Проверяет по HTTP только "отвечает ли веб-сервер", а не "работает ли автоматика внутри". Зависание конкретно event loop'а HA обычно всё равно роняет и веб-интерфейс, но это не 100%-гарантированная эквивалентность.
+- Жёсткий reset VM — это то же самое, что нажать физическую кнопку Reset на сервере: несохранённые данные/состояние теряются. Это осознанный компромисс ради надёжности (если HA завис намертво, graceful reboot всё равно не поможет).
+- Единая точка отказа теперь — сама эта ESP32-S3 и её Wi-Fi: если она сама отвалится, вы теряете сразу все три независимые функции (хард-ресет MikroTik, LED-индикация, и watchdog для HA). Более отказоустойчивый вариант — вынести этот модуль на отдельную физическую плату, но тогда теряется "бесплатность" переиспользования уже имеющегося Wi-Fi-модуля.
+- Проверка PVE/Unifi по HTTPS с `verify_ssl: false` — приемлемо в доверенной локальной сети, но помните, что это отключает проверку сертификата для всех HTTP-запросов этого устройства, включая сам вызов PVE API.
 
 ## Управление вручную из Telegram
 
@@ -259,7 +302,7 @@ telegram_chat_id: -1234567890
 ```yaml
 action: light.turn_on
 target:
-  entity_id: light.mikrotik_atlgm_status_led
+  entity_id: light.mikrotik_atlgm_watchdog_mikrotik_status_led
 data:
   effect: "Police Red Blue"   # затем "Purple Fast Blink", "Red Fast Blink", "Green Slow Blink", "Yellow Slow Blink"
 ```
@@ -334,7 +377,7 @@ HA генерирует `entity_id` транслитерацией `alias:`, н�
 
 **`Referenced entities ... are missing` при `automation.trigger`** — используйте реальный `entity_id`, не `id:`.
 
-**Хард-ресет всегда одной и той же длительности, override не работает** — проверьте, что `number.mikrotik_atlgm_hard_reset_override_seconds` реально меняет значение перед нажатием (Developer Tools → States, посмотрите на entity сразу после отправки команды/срабатывания автоматизации); проверьте, что в прошивке `delay:` у кнопки использует именно лямбду с чтением этого номера, а не захардкоженное значение (если правили прошивку руками).
+**Хард-ресет всегда одной и той же длительности, override не работает** — проверьте, что `number.mikrotik_atlgm_watchdog_mikrotik_hard_reset_override_seconds` реально меняет значение перед нажатием (Developer Tools → States, посмотрите на entity сразу после отправки команды/срабатывания автоматизации); проверьте, что в прошивке `delay:` у кнопки использует именно лямбду с чтением этого номера, а не захардкоженное значение (если правили прошивку руками).
 
 **`/mikrotik_hard_reset 10` не распознаёт аргумент** — проверьте в логах HA событие `telegram_command`, поле `data.args` — должно быть `["10"]`. Если бот-библиотека/версия `telegram_bot` разбивает аргументы иначе, поправьте шаблон `requested_minutes` в автоматизации `telegram_hard_reset` под фактическую структуру `args`.
 
